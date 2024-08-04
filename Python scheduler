@@ -1,0 +1,108 @@
+
+##Python Schduler###
+
+import schedule
+import time
+
+import winreg as winreg
+
+INTERNET_SETTINGS = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+    r'Software\Microsoft\Windows\CurrentVersion\Internet Settings',
+    0, winreg.KEY_ALL_ACCESS)
+
+def set_key(name, value):
+    _, reg_type = winreg.QueryValueEx(INTERNET_SETTINGS, name)
+    winreg.SetValueEx(INTERNET_SETTINGS, name, 0, reg_type, value)
+
+set_key('ProxyEnable', 0) # for disable Proxy setting
+# set_key('ProxyEnable', 1) # for enable Proxy setting
+set_key('ProxyOverride', u'*.local;<local>')  # Bypass the proxy for localhost
+set_key('ProxyServer', u'wcg.mmt.com:8080')
+print ('Proxy settings removed')
+
+# def Send_report_City_Wise_booked_RPD_Tracker_v1():
+#     %run "C:\Users\mmt7982\OneDrive - Make My Trip (I) Private Limited\Desktop\Automation\City_Tracker\City_Wise_booked_RPD_Tracker_v1.py"
+#     print("Script run completed for City_Wise_booked_RPD_Tracker_v1")
+# schedule.every().day.at("06:25").do(Send_report_City_Wise_booked_RPD_Tracker_v1)
+
+# def Send_report_Ind_City_Booked_Tracker_v1():
+#     %run "C:\Users\mmt7982\OneDrive - Make My Trip (I) Private Limited\Desktop\Automation\Ind_City_Booked_Tracker\Ind_City_Booked_Tracker_v1.py"
+#     print("Script run completed for Ind_City_Booked_Tracker_v1")
+# schedule.every().day.at("06:35").do(Send_report_Ind_City_Booked_Tracker_v1)
+
+# def Send_report_Daily_Production():
+#     %run "C:\Users\mmt7982\OneDrive - Make My Trip (I) Private Limited\Desktop\Automation\Daily_Production\Daily_Production.py"
+#     print("Script run completed for Daily_Production")
+# schedule.every().day.at("06:45").do(Send_report_Daily_Production)
+
+
+def Send_report_Mid_Tracker():
+    get_ipython().run_line_magic('run', '"C:\\Users\\mmt7982\\OneDrive - Make My Trip (I) Private Limited\\Desktop\\Automation\\Mid_Tracker\\Mid_Tracker.py"')
+    print("Script run completed for Mid_Tracker")
+schedule.every().day.at("06:45").do(Send_report_Mid_Tracker)
+
+
+
+def Send_report_Review_Rating_Booked_Production():
+    get_ipython().run_line_magic('run', '"C:\\Users\\mmt7982\\OneDrive - Make My Trip (I) Private Limited\\Desktop\\Automation\\Review_Rating_Tracker\\Review_Rating_Booked_Production.py"')
+    print("Script run completed for Review_Rating_Booked_Production")
+schedule.every().day.at("07:10").do(Send_report_Review_Rating_Booked_Production)
+
+
+def Send_report_Group_bookings():
+    get_ipython().run_line_magic('run', '"C:\\Users\\mmt7982\\OneDrive - Make My Trip (I) Private Limited\\Desktop\\Automation\\Group_Bookings\\Group_bookings.py"')
+    print("Script run completed for Group_bookings")
+schedule.every().day.at("07:20").do(Send_report_Group_bookings)
+
+
+def Send_report_Booked_Travelled_RNs():
+    get_ipython().run_line_magic('run', '"C:\\Users\\mmt7982\\OneDrive - Make My Trip (I) Private Limited\\Desktop\\Automation\\Booked & Travelled RNs\\Booked_Travelled_RNs.py"')
+    print("Script run completed for Booked_Travelled_RNs")
+schedule.every().day.at("07:30").do(Send_report_Booked_Travelled_RNs)
+
+
+def Send_report_Day_Use_Room_Booked_Production():
+    get_ipython().run_line_magic('run', '"C:\\Users\\mmt7982\\OneDrive - Make My Trip (I) Private Limited\\Desktop\\Automation\\Day_Use_Room_Production\\Day_Use_Room_Booked_Production.py"')
+    print("Script run completed for Day_Use_Room_Booked_Production")
+schedule.every().day.at("07:40").do(Send_report_Day_Use_Room_Booked_Production)
+
+def Send_report_MMTBlack_GoTribe():
+    get_ipython().run_line_magic('run', '"C:\\Users\\mmt7982\\OneDrive - Make My Trip (I) Private Limited\\Desktop\\Automation\\Black_Tracker\\MMTBlack_GoTribe.py"')
+    print("Script run completed for MMTBlack_GoTribe")
+schedule.every().day.at("07:50").do(Send_report_MMTBlack_GoTribe)
+
+def Send_report_GoMMT_NPS():
+    get_ipython().run_line_magic('run', '"C:\\Users\\mmt7982\\OneDrive - Make My Trip (I) Private Limited\\Desktop\\Automation\\Go-MMT_NPS\\GoMMT_NPS.py"')
+    print("Script run completed for GoMMT_NPS")
+schedule.every().day.at("08:00").do(Send_report_GoMMT_NPS)
+
+def Send_report_OTA_Hotels_Mapping():
+    get_ipython().run_line_magic('run', '"C:\\Users\\mmt7982\\OneDrive - Make My Trip (I) Private Limited\\Desktop\\Automation\\OTA_Mapping\\OTA_Hotels_Mapping.py"')
+    print("Script run completed for OTA_Hotels_Mapping")
+schedule.every().day.at("08:10").do(Send_report_OTA_Hotels_Mapping)
+
+def Send_report_All_Sources_RNs():
+    get_ipython().run_line_magic('run', '"C:\\Users\\mmt7982\\OneDrive - Make My Trip (I) Private Limited\\Desktop\\Automation\\All_Scr_RNs\\All_Sources_RNs.py"')
+    print("Script run completed for All_Sources_RNs")
+schedule.every().day.at("08:20").do(Send_report_All_Sources_RNs)
+
+# def Send_report_DSR():
+#     %run "C:\Users\mmt7982\OneDrive - Make My Trip (I) Private Limited\Desktop\Automation\DSR\DSR_V1.py"
+#     print("Script run completed for DSR")
+# schedule.every().day.at("08:30").do(Send_report_DSR)
+
+
+def Send_report_Inactive_hotels():
+    get_ipython().run_line_magic('run', '"C:\\Users\\mmt7982\\OneDrive - Make My Trip (I) Private Limited\\Desktop\\Automation\\In_active_property\\Inactive_hotels.py"')
+    print("Script run completed for Inactive_hotels")
+schedule.every().day.at("09:40").do(Send_report_Inactive_hotels)
+
+while 1:
+    schedule.run_pending()
+    time.sleep(1)
+
+
+
+
+
+
