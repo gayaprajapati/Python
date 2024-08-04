@@ -1,0 +1,1524 @@
+### Go-MMT DSR Report ##
+
+import pandas as pd
+import os
+import requests
+import time
+import numpy as np
+from pprint import pprint
+import json
+import xlwings  as xw
+import datetime as dt
+import io
+from datetime import timedelta
+from datetime import datetime
+from xlwings import constants
+from PIL import ImageGrab #ImageGrab
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.base import MIMEBase
+from email import encoders
+import mimetypes
+import os.path
+import openpyxl
+import datetime 
+
+
+def poll_job(s, redash_url, job):
+    # TODO: add timeout
+    while job['status'] not in (3,4):
+        response = s.get('{}/api/jobs/{}'.format(redash_url, job['id']))
+        job = response.json()['job']
+        time.sleep(1)
+ 
+    if job['status'] == 3:
+        return job['query_result_id']
+    
+    return None
+
+
+#For GI
+def get_fresh_query_result(redash_url, query_id, api_key):
+    s = requests.Session()
+    s.headers.update({'Authorization': 'Key {}'.format(api_key)})
+ 
+    response = s.post('{}/api/queries/{}/refresh'.format(redash_url, query_id))
+ 
+    if response.status_code != 200:
+        raise Exception('Refresh failed.')
+ 
+    result_id = poll_job(s, redash_url, response.json()['job'])
+ 
+    if result_id:
+        response = s.get('{}/api/queries/{}/results/{}.json'.format(redash_url, query_id, result_id))
+        if response.status_code != 200:
+            raise Exception('Failed getting results.')
+    else:
+        raise Exception('Query execution failed.')
+ 
+    return response.json()['query_result']['data']['rows']
+ 
+
+    # Need to use a *user API key* here (and not a query API key).
+
+api_key = 'jgrtrDepU6ry9rchdqnrpyc0C2oJ1C6ldfLmOFZQ'
+    
+GIRaw = pd.DataFrame(get_fresh_query_result('https://redash.goibibo.com/', 39228, api_key),columns = ['voyagerhotelid','bookingdate','bkg','rns','gmv','gr','sp','convfee'])
+
+yesterday_date=datetime.date.today()-timedelta(days=1)
+yesterday_date=yesterday_date.strftime("%Y-%m-%d")
+
+#For MMT
+def get_fresh_query_result(redash_url, query_id, api_key1):
+    s = requests.Session()
+    s.headers.update({'Authorization': 'Key {}'.format(api_key1)})
+ 
+    response = s.post('{}/api/queries/{}/refresh'.format(redash_url, query_id))
+ 
+    if response.status_code != 200:
+        raise Exception('Refresh failed.')
+ 
+    result_id = poll_job(s, redash_url, response.json()['job'])
+ 
+    if result_id:
+        response = s.get('{}/api/queries/{}/results/{}.json'.format(redash_url, query_id, result_id))
+        if response.status_code != 200:
+            raise Exception('Failed getting results.')
+    else:
+        raise Exception('Query execution failed.')
+ 
+    return response.json()['query_result']['data']['rows']
+ 
+
+    # Need to use a *user API key* here (and not a query API key).
+
+api_key1 = 'esBMUvhZshiJVEhTRxYGBWYO7pGSYrGoMlgmagg9'
+    
+MMTRaw = pd.DataFrame(get_fresh_query_result('http://hotels-redash.mmt.com/', 2971, api_key1),columns = ['Products','Booking_date','Bkg','RNs','GMV','GRAmt','SP_amt','markupsamt'])
+
+
+ASPFile = pd.read_excel('C:\Offic data\HTL\Chain\DSR\ASP_Dump.xlsx', sheet_name='Sheet1')
+
+ASPFile['voyagerhotelid'] = ASPFile['voyagerhotelid'].astype('str')
+ASPFile['Products'] = ASPFile['Products'].astype('str')
+
+GIRaw['voyagerhotelid'] = GIRaw['voyagerhotelid'].astype('str')
+
+MMTRaw['Products'] = MMTRaw['Products'].astype('str')
+
+FinalGI=pd.merge(GIRaw,ASPFile,on='voyagerhotelid',how='left')
+FinalMMT=pd.merge(MMTRaw,ASPFile,on='Products',how='left')
+
+FinalGI['Cluster'] = FinalGI.Cluster.fillna('NA')
+FinalGI['ASP_Bucket'] = FinalGI.ASP_Bucket.fillna('Others')
+FinalGI['Segment'] = FinalGI.Segment.fillna('Independent')
+
+FinalMMT['Cluster'] = FinalMMT.Cluster.fillna('NA')
+FinalMMT['ASP_Bucket'] = FinalMMT.ASP_Bucket.fillna('Others')
+FinalMMT['Segment'] = FinalMMT.Segment.fillna('Independent')
+
+GIRN=FinalGI  #[(FinalGI["AltAcco"] == 0)]
+MMTRN=FinalMMT  #[(FinalMMT["AltAcco"] == 0)]
+
+
+MMTAggr = {'Bkg':'sum','RNs':'sum','GMV':'sum','GRAmt':'sum','SP_amt':'sum','markupsamt':'sum'}
+GIAggr = {'bkg':'sum','rns':'sum','gmv':'sum','gr':'sum','sp':'sum','convfee':'sum'}
+
+OverallMMT = MMTRN.groupby(['Booking_date','ASP_Bucket','Segment','Cluster'],as_index=False).agg(MMTAggr)
+OverallGI = GIRN.groupby(['bookingdate','ASP_Bucket','Segment','Cluster'],as_index=False).agg(GIAggr)
+
+OverallMMT.insert(10, 'Brand', 'MMT')
+OverallGI.insert(10, 'Brand', 'GI')
+
+wb = xw.Book(r'C:\Offic data\HTL\Chain\DSR\DSR_Dashboard.xlsb')
+mysheet2 = wb.sheets('Gommtbkg')
+m=mysheet2.range('Q1').value
+mysheet2.range('B'+str(int(m))).value=OverallMMT.values
+g=mysheet2.range('Q1').value
+mysheet2.range('B'+str(int(g))).value=OverallGI.values
+
+
+
+#Go-MMT Visits
+
+import pandas as pd
+import os
+import requests
+import time
+import numpy as np
+from pprint import pprint
+import json
+import xlwings  as xw
+import datetime as dt
+import io
+from datetime import timedelta
+from datetime import datetime
+from xlwings import constants
+from PIL import ImageGrab
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.base import MIMEBase
+from email import encoders
+import mimetypes
+import os.path
+import openpyxl
+
+app = xw.App()
+import win32com.client
+import zipfile
+import datetime 
+
+# MMT Visits
+
+outlook = win32com.client.Dispatch("Outlook.Application")
+mapi = outlook.GetNamespace("MAPI")
+your_folder = mapi.GetDefaultFolder(6).Folders.Item("Omniture")
+# print(your_folder)
+msgs=your_folder.Items
+# msg=msgs.GetLast()
+# print(msg.subject)
+# print (msg.subject)
+# make subject dynamic as per date
+# subject='SEM Automated Daily Dashboard | ' + predate
+subject = 'Data Warehouse: for Makemytrip Mobile App'
+attachmentname='App_Report.zip'
+# create new filename as per date
+MyFileName=r'C:\Users\mmt7982\Desktop\MMT_Crawled\Visits\App_Report.zip' 
+d1 = dt.datetime.date(dt.datetime.today() - dt.timedelta(days = 0))
+
+for msg in msgs:
+    if dt.datetime.date(msg.ReceivedTime) == d1:
+        for att in msg.Attachments:
+            if att.FileName == attachmentname:
+                att.SaveAsFile(MyFileName)
+                
+# def get_product_id(x):
+#     return(x[6:])
+
+subject1 = 'Data Warehouse: for MMT Global'
+attachmentname1='Web_Report.zip'
+# create new filename as per date
+MyFileName1=r'C:\Users\mmt7982\Desktop\MMT_Crawled\Visits\Web_Report.zip' 
+d1 = dt.datetime.date(dt.datetime.today() - dt.timedelta(days = 0))
+
+for msg in msgs:
+    if dt.datetime.date(msg.ReceivedTime) == d1:
+        for att in msg.Attachments:
+            if att.FileName == attachmentname1:
+                att.SaveAsFile(MyFileName1)
+
+zf = zipfile.ZipFile(r'C:\Users\mmt7982\Desktop\MMT_Crawled\Visits\App_Report.zip') 
+df = pd.read_csv(zf.open('App_Report.csv'),converters = {'Products':str})
+
+zf1 = zipfile.ZipFile(r'C:\Users\mmt7982\Desktop\MMT_Crawled\Visits\Web_Report.zip') 
+df1 = pd.read_csv(zf1.open('Web_Report.csv'))
+df1['Products'] = df1['Products'].astype(str)
+
+def get_product_id(x):
+    return(x[6:])
+
+df1['Products'] = df1.apply(lambda x: get_product_id(x.Products), axis=1)
+FinalVisits= pd.concat([df,df1])
+ASPFile = pd.read_excel('C:\Offic data\HTL\Chain\DSR\ASP_Dump.xlsx', sheet_name='Sheet1')
+ASPFile['voyagerhotelid'] = ASPFile['voyagerhotelid'].astype('str')
+ASPFile['Products'] = ASPFile['Products'].astype('str')
+MMT_Visits=pd.merge(FinalVisits,ASPFile,on=['Products'],how='left')
+MMT_Visits['Cluster'] = MMT_Visits.Cluster.fillna('NA')
+MMT_Visits['ASP_Bucket'] = MMT_Visits.ASP_Bucket.fillna('Others')
+MMT_Visits['Segment'] = MMT_Visits.Segment.fillna('Independent')
+
+filter = MMT_Visits["Products"] != ""
+MMT_Visits = MMT_Visits[filter]
+
+# today = date.today()
+# yesterday = today - timedelta(days = 1)
+# formatted_date = yesterday.strftime('%Y-%m-%d')
+
+yesterday_date=datetime.date.today()-timedelta(days=1)
+yesterday_date=yesterday_date.strftime("%Y-%m-%d")
+
+
+MMT_Visits.insert(12, "dates",yesterday_date)
+
+
+MMT_Aggr={'Visits':'sum','Orders':'sum'}
+
+ 
+Final_MMT_Visits = MMT_Visits.groupby(['dates','ASP_Bucket','Segment','Cluster'],as_index=False).agg(MMT_Aggr)
+
+Final_MMT_Visits.insert(6, 'Brand', 'MMT')
+
+
+# Gi Visits
+
+import pandas as pd
+import os
+import requests
+import time
+import numpy as np
+from pprint import pprint
+import json
+import xlwings  as xw
+import datetime as dt
+import io
+from datetime import timedelta
+from datetime import datetime
+from xlwings import constants
+from PIL import ImageGrab #ImageGrab
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.base import MIMEBase
+from email import encoders
+import mimetypes
+import os.path
+import openpyxl
+import datetime 
+
+
+def poll_job(s, redash_url, job):
+    # TODO: add timeout
+    while job['status'] not in (3,4):
+        response = s.get('{}/api/jobs/{}'.format(redash_url, job['id']))
+        job = response.json()['job']
+        time.sleep(1)
+ 
+    if job['status'] == 3:
+        return job['query_result_id']
+    
+    return None
+
+
+#For GI
+def get_fresh_query_result(redash_url, query_id, api_key):
+    s = requests.Session()
+    s.headers.update({'Authorization': 'Key {}'.format(api_key)})
+ 
+    response = s.post('{}/api/queries/{}/refresh'.format(redash_url, query_id))
+ 
+    if response.status_code != 200:
+        raise Exception('Refresh failed.')
+ 
+    result_id = poll_job(s, redash_url, response.json()['job'])
+ 
+    if result_id:
+        response = s.get('{}/api/queries/{}/results/{}.json'.format(redash_url, query_id, result_id))
+        if response.status_code != 200:
+            raise Exception('Failed getting results.')
+    else:
+        raise Exception('Query execution failed.')
+ 
+    return response.json()['query_result']['data']['rows']
+ 
+
+    # Need to use a *user API key* here (and not a query API key).
+
+api_key = 'jgrtrDepU6ry9rchdqnrpyc0C2oJ1C6ldfLmOFZQ'
+    
+GIRaw = pd.DataFrame(get_fresh_query_result('https://redash.goibibo.com/', 42153, api_key),columns = ['voyagerhotelid','dates','hits','txn'])
+
+ASPFile = pd.read_excel('C:\Offic data\HTL\Chain\DSR\ASP_Dump.xlsx', sheet_name='Sheet1')
+
+ASPFile['voyagerhotelid'] = ASPFile['voyagerhotelid'].astype('str')
+GIRaw['voyagerhotelid'] = GIRaw['voyagerhotelid'].astype('str')
+
+FinalGI=pd.merge(GIRaw,ASPFile,on='voyagerhotelid',how='left')
+FinalGI['Cluster'] = FinalGI.Cluster.fillna('NA')
+FinalGI['ASP_Bucket'] = FinalGI.ASP_Bucket.fillna('Others')
+FinalGI['Segment'] = FinalGI.Segment.fillna('Independent')
+
+GIRN=FinalGI  #[(FinalGI["AltAcco"] == 0)]
+
+
+
+
+GIAggr = {'hits':'sum','txn':'sum'}
+
+
+OverallGI = GIRN.groupby(['dates','ASP_Bucket','Segment','Cluster'],as_index=False).agg(GIAggr)
+
+
+OverallGI.insert(6, 'Brand', 'GI')
+
+
+wb = xw.Book(r'C:\Offic data\HTL\Chain\DSR\DSR_Dashboard.xlsb')
+mysheet2 = wb.sheets('Visits')
+
+g=mysheet2.range('L1').value
+mysheet2.range('B'+str(int(g))).value=OverallGI.values
+
+m=mysheet2.range('L1').value
+mysheet2.range('B'+str(int(m))).value=Final_MMT_Visits.values
+
+
+
+
+#last 7 Days Go-MMT PnL Data
+
+import pandas as pd
+import os
+import requests
+import time
+import numpy as np
+from pprint import pprint
+import json
+import xlwings  as xw
+import datetime as dt
+import io
+from datetime import timedelta
+from datetime import datetime
+from xlwings import constants
+from PIL import ImageGrab #ImageGrab
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.base import MIMEBase
+from email import encoders
+import mimetypes
+import os.path
+import openpyxl
+import datetime 
+
+
+def poll_job(s, redash_url, job):
+    # TODO: add timeout
+    while job['status'] not in (3,4):
+        response = s.get('{}/api/jobs/{}'.format(redash_url, job['id']))
+        job = response.json()['job']
+        time.sleep(1)
+ 
+    if job['status'] == 3:
+        return job['query_result_id']
+    
+    return None
+
+def get_fresh_query_result(redash_url, query_id, api_key1):
+    s = requests.Session()
+    s.headers.update({'Authorization': 'Key {}'.format(api_key1)})
+ 
+    response = s.post('{}/api/queries/{}/refresh'.format(redash_url, query_id))
+ 
+    if response.status_code != 200:
+        raise Exception('Refresh failed.')
+ 
+    result_id = poll_job(s, redash_url, response.json()['job'])
+ 
+    if result_id:
+        response = s.get('{}/api/queries/{}/results/{}.json'.format(redash_url, query_id, result_id))
+        if response.status_code != 200:
+            raise Exception('Failed getting results.')
+    else:
+        raise Exception('Query execution failed.')
+ 
+    return response.json()['query_result']['data']['rows']
+ 
+
+    # Need to use a *user API key* here (and not a query API key).
+
+api_key1 = 'esBMUvhZshiJVEhTRxYGBWYO7pGSYrGoMlgmagg9'
+
+    
+MMTRaw = pd.DataFrame(get_fresh_query_result('http://hotels-redash.mmt.com/', 2811, api_key1),columns = ['Products','hotel_Name','paymode','Booking_date','checkin_date','checkout_date','wlt_usage','rooms','adult_count','Brand','Bkg','RNs','GMV','GRAmt','SP_amt','markupsamt','Wlt'])
+
+
+# Need to use a *user API key* here (and not a query API key).
+
+api_key = 'jgrtrDepU6ry9rchdqnrpyc0C2oJ1C6ldfLmOFZQ'
+    
+GIRaw = pd.DataFrame(get_fresh_query_result('https://redash.goibibo.com/', 41576, api_key),columns = ['voyagerhotelid','hotel_name','paymode','bookingdate','checkin','checkout','wlt_usage','rooms','adults','brand','bkg','rns','gmv','gr','sp','convfee','wlt'])
+
+yesterday_date=datetime.date.today()-timedelta(days=1)
+yesterday_date=yesterday_date.strftime("%Y-%m-%d")
+
+ASPFile = pd.read_excel('C:\Offic data\HTL\Chain\DSR\ASP_Dump.xlsx', sheet_name='Sheet1')
+
+ASPFile['Products'] = ASPFile['Products'].astype('str')
+ASPFile['voyagerhotelid'] = ASPFile['voyagerhotelid'].astype('str')
+GIRaw['voyagerhotelid'] = GIRaw['voyagerhotelid'].astype('str')
+
+FinalMMT=pd.merge(MMTRaw,ASPFile,on='Products',how='left')
+FinalGI=pd.merge(GIRaw,ASPFile,on='voyagerhotelid',how='left')
+
+FinalGI['Locus_City'] = FinalGI.Locus_City.fillna('NA')
+FinalGI['Star_Rating'] = FinalGI.Star_Rating.fillna('0')
+FinalGI['Tier'] = FinalGI.Tier.fillna('Tier 3')
+FinalGI['Cluster'] = FinalGI.Cluster.fillna('NA')
+FinalGI['Chain_Name'] = FinalGI.Chain_Name.fillna('0')
+FinalGI['ASP_Bucket'] = FinalGI.ASP_Bucket.fillna('Others')
+FinalGI['Segment'] = FinalGI.Segment.fillna('Independent')
+
+FinalMMT['Locus_City'] = FinalMMT.Locus_City.fillna('NA')
+FinalMMT['Star_Rating'] = FinalMMT.Star_Rating.fillna('0')
+FinalMMT['Tier'] = FinalMMT.Tier.fillna('Tier 3')
+FinalMMT['Cluster'] = FinalMMT.Cluster.fillna('NA')
+FinalMMT['Chain_Name'] = FinalMMT.Chain_Name.fillna('0')
+FinalMMT['ASP_Bucket'] = FinalMMT.ASP_Bucket.fillna('Others')
+FinalMMT['Segment'] = FinalMMT.Segment.fillna('Independent')
+
+
+
+MMTRN=FinalMMT  #[(FinalMMT["AltAcco"] == 0)]
+GIRN=FinalGI  #[(FinalGI["AltAcco"] == 0)]
+
+MMTAggr = {'Bkg':'sum','RNs':'sum','GMV':'sum','GRAmt':'sum','SP_amt':'sum','markupsamt':'sum','Wlt':'sum'}
+GIAggr = {'bkg':'sum','rns':'sum','gmv':'sum','gr':'sum','sp':'sum','convfee':'sum','wlt':'sum'}
+
+OverallMMT = MMTRN.groupby(['ingocode','hotel_Name','Locus_City','paymode','Booking_date','checkin_date','checkout_date','wlt_usage','rooms','adult_count','Brand','Star_Rating','Tier','Cluster','Chain_Name','ASP_Bucket','Segment'],as_index=False).agg(MMTAggr)
+OverallGI = GIRN.groupby(['ingocode','hotel_name','Locus_City','paymode','bookingdate','checkin','checkout','wlt_usage','rooms','adults','brand','Star_Rating','Tier','Cluster','Chain_Name','ASP_Bucket','Segment'],as_index=False).agg(GIAggr)
+
+
+wb = xw.Book(r'C:\Offic data\HTL\Chain\DSR\DSR_Dashboard.xlsb')
+mysheet2 = wb.sheets('Raw Data')
+test = mysheet2.range('E2:AB1000000').value = ""
+m=mysheet2.range('AD1').value
+mysheet2.range('E'+str(int(m))).value=OverallMMT.values
+g=mysheet2.range('AD1').value
+mysheet2.range('E'+str(int(g))).value=OverallGI.values
+wb.api.RefreshAll()
+wb.save()
+
+
+# Mail for Cluster A
+
+#Saving images
+import pandas as pd
+import os
+import requests
+import time
+import numpy as np
+from pprint import pprint
+import json
+import xlwings  as xw
+import datetime as dt
+import io
+from datetime import timedelta
+from datetime import datetime
+from xlwings import constants
+from PIL import ImageGrab #ImageGrab
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.base import MIMEBase
+from email import encoders
+import mimetypes
+import os.path
+import openpyxl
+import datetime 
+path='C://Offic data//HTL//Chain//DSR'
+if not os.path.exists(path):
+    os.makedirs(path)
+
+wb = xw.Book(r'C:\Offic data\HTL\Chain\DSR\DSR_Dashboard.xlsb')
+mysheet1 = wb.sheets('Overall_Snapshot_A')
+
+yesterday_date=datetime.date.today()-timedelta(days=1)
+yesterday_date=yesterday_date.strftime("%Y-%m-%d")
+
+
+#Snapshot
+thisrange = mysheet1.range("D2:W30")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overallA.png')
+
+thisrange = mysheet1.range("D34:P36")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_1A.png')
+
+thisrange = mysheet1.range("D47:P49")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_2A.png')
+
+thisrange = mysheet1.range("D60:P71")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_3A.png')
+
+thisrange = mysheet1.range("D78:P87")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_4A.png')
+
+thisrange = mysheet1.range("D89:P99")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_5A.png')
+
+thisrange = mysheet1.range("D101:T108")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_6A.png')
+
+thisrange = mysheet1.range("D110:T117")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_7A.png')
+
+thisrange = mysheet1.range("D120:P136")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_8A.png')
+
+thisrange = mysheet1.range("D139:P155")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_9A.png')
+
+thisrange = mysheet1.range("D158:P174")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_10A.png')
+
+thisrange = mysheet1.range("D192:O213")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_11A.png')
+
+
+thisrange = mysheet1.range("C217:O248")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_12A.png')
+wb.close()
+
+# Mail Configration
+
+import pandas as pd
+import pyodbc
+import os
+from datetime import timedelta
+from dateutil.relativedelta import relativedelta
+import datetime
+import xlwings  as xw
+from xlwings import constants
+from PIL import ImageGrab #ImageGrab
+import time
+import smtplib
+import pyodbc
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.base import MIMEBase
+from email import encoders
+import mimetypes
+
+
+def send_email_1(subject,body,to_email_list):
+    to_emails= to_email_list
+    to_CC=to_CC_list
+    message = body
+    s = smtplib.SMTP(host='smtp.outlook.office365.com', port=587)
+    s.starttls()
+    s.login('MMT7982@go-mmt.com','gommt@21')
+    msg = MIMEMultipart() 
+    msg['From']='Gaya.Prajapati@go-mmt.com'
+    msg['To']=to_emails
+    msg['CC']=to_CC
+    msg['Subject']=subject
+    msg.attach(MIMEText(message, 'HTML'))
+
+    def images(image_name):
+        fp = open(path +'\\' + image_name +'.png', 'rb')
+        msgImage1 = MIMEImage(fp.read())
+        fp.close()
+        msgImage1.add_header('Content-ID', '<' + image_name +'>')
+        msg.attach(msgImage1)
+    
+    images('overallA')
+    images('overall_1A')
+    images('overall_2A')
+    images('overall_3A')
+    images('overall_4A')
+    images('overall_5A')
+    images('overall_6A')
+    images('overall_7A')
+    images('overall_8A')
+    images('overall_9A')
+    images('overall_10A')
+    images('overall_11A')
+    images('overall_12A')
+    
+    
+
+    s.send_message(msg)
+    del msg
+    s.quit()
+    
+print('Preparing Mail body')
+text0 = "<div style = 'color:green'> This is an automated email </div> <br/>"
+text = "Hi All,  <br/> <br/> Please find below summary of Go-MMT Cluster- A Production View:-<br/>" # '+ yesterday_date +'
+text1 = "Note- First three table have last 7 Days’ data where rest of the tables have only Yesterday’s data. <br/><br/>" 
+Image1 = '<img src="cid:overallA"></img><br/><br/>'
+Image2 = '<img src="cid:overall_1A"></img><br/><br/>'
+Image3 = '<img src="cid:overall_2A"></img><br/><br/>'
+Image4 = '<img src="cid:overall_3A"></img><br/><br/>'
+Image5 = '<img src="cid:overall_4A"></img><br/><br/>'
+Image6 = '<img src="cid:overall_5A"></img><br/><br/>'
+Image7 = '<img src="cid:overall_6A"></img><br/><br/>'
+Image8 = '<img src="cid:overall_7A"></img><br/><br/>'
+Image9 = '<img src="cid:overall_8A"></img><br/><br/>'
+Image10 = '<img src="cid:overall_9A"></img><br/><br/>'
+Image11 = '<img src="cid:overall_10A"></img><br/><br/>'
+Image12 = '<img src="cid:overall_11A"></img><br/><br/>'
+Image13 = '<img src="cid:overall_12A"></img><br/><br/>'
+
+
+
+   
+Regards = "<p>Best & Regards,<br/>Gaya Prasad</p>"
+    
+subject='DOM Hotels GO-MMT Cluster-A DSR | ' + yesterday_date
+body = text0 + text + text1 + Image1 + Image2 + Image3 + Image4 + Image5 + Image6 + Image7 + Image8 + Image9 + Image10 + Image11 + Image12 + Image13 + Regards
+
+rec_To_list = ['Piyush.Gupta@go-mmt.com','srinivasan.kj@go-mmt.com']
+#rec_To_list = ['Abhishek Logani <Abhishek.Logani@go-mmt.com','Vijay.Vittal@go-mmt.com','Piyush.Gupta@go-mmt.com','Rittu.Paul@go-mmt.com','Aashutosh@go-mmt.com','Dhaval.Narwani@go-mmt.com','srinivasan.kj@go-mmt.com','tanvi.girdhar@go-mmt.com','Pragya.Bhardwaj@go-mmt.com','Prateek.Singal@go-mmt.com','hina.bhatia@go-mmt.com']
+
+to_email_list=', '.join(rec_To_list)
+rec_CC_list=['gaya.prajapati@go-mmt.com']
+to_CC_list=', '.join(rec_CC_list)
+        
+send_email_1(subject,body,to_email_list)
+
+
+
+# Mail for Cluster B
+
+#Saving images
+import pandas as pd
+import os
+import requests
+import time
+import numpy as np
+from pprint import pprint
+import json
+import xlwings  as xw
+import datetime as dt
+import io
+from datetime import timedelta
+from datetime import datetime
+from xlwings import constants
+from PIL import ImageGrab #ImageGrab
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.base import MIMEBase
+from email import encoders
+import mimetypes
+import os.path
+import openpyxl
+import datetime 
+path='C://Offic data//HTL//Chain//DSR'
+if not os.path.exists(path):
+    os.makedirs(path)
+
+wb = xw.Book(r'C:\Offic data\HTL\Chain\DSR\DSR_Dashboard.xlsb')
+mysheet1 = wb.sheets('Overall_Snapshot_B')
+
+yesterday_date=datetime.date.today()-timedelta(days=1)
+yesterday_date=yesterday_date.strftime("%Y-%m-%d")
+
+
+#Snapshot
+thisrange = mysheet1.range("D2:W30")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overallB.png')
+
+thisrange = mysheet1.range("D34:P36")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_1B.png')
+
+thisrange = mysheet1.range("D47:P49")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_2B.png')
+
+thisrange = mysheet1.range("D60:P71")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_3B.png')
+
+thisrange = mysheet1.range("D78:P87")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_4B.png')
+
+thisrange = mysheet1.range("D89:P99")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_5B.png')
+
+thisrange = mysheet1.range("D101:T108")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_6B.png')
+
+thisrange = mysheet1.range("D110:T117")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_7B.png')
+
+thisrange = mysheet1.range("D120:P136")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_8B.png')
+
+thisrange = mysheet1.range("D139:P155")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_9B.png')
+
+thisrange = mysheet1.range("D158:P174")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_10B.png')
+
+thisrange = mysheet1.range("D192:O213")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_11B.png')
+
+
+thisrange = mysheet1.range("C217:O248")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_12B.png')
+wb.close()
+
+# Mail Configration
+
+import pandas as pd
+import pyodbc
+import os
+from datetime import timedelta
+from dateutil.relativedelta import relativedelta
+import datetime
+import xlwings  as xw
+from xlwings import constants
+from PIL import ImageGrab #ImageGrab
+import time
+import smtplib
+import pyodbc
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.base import MIMEBase
+from email import encoders
+import mimetypes
+
+
+def send_email_1(subject,body,to_email_list):
+    to_emails= to_email_list
+    to_CC=to_CC_list
+    message = body
+    s = smtplib.SMTP(host='smtp.outlook.office365.com', port=587)
+    s.starttls()
+    s.login('MMT7982@go-mmt.com','gommt@21')
+    msg = MIMEMultipart() 
+    msg['From']='Gaya.Prajapati@go-mmt.com'
+    msg['To']=to_emails
+    msg['CC']=to_CC
+    msg['Subject']=subject
+    msg.attach(MIMEText(message, 'HTML'))
+
+    def images(image_name):
+        fp = open(path +'\\' + image_name +'.png', 'rb')
+        msgImage1 = MIMEImage(fp.read())
+        fp.close()
+        msgImage1.add_header('Content-ID', '<' + image_name +'>')
+        msg.attach(msgImage1)
+    
+    images('overallB')
+    images('overall_1B')
+    images('overall_2B')
+    images('overall_3B')
+    images('overall_4B')
+    images('overall_5B')
+    images('overall_6B')
+    images('overall_7B')
+    images('overall_8B')
+    images('overall_9B')
+    images('overall_10B')
+    images('overall_11B')
+    images('overall_12B')
+    
+    
+
+    s.send_message(msg)
+    del msg
+    s.quit()
+    
+print('Preparing Mail body')
+text0 = "<div style = 'color:green'> This is an automated email </div> <br/>"
+text = "Hi All,  <br/> <br/> Please find below summary of Go-MMT Cluster- B Production View:-<br/>" # '+ yesterday_date +'
+text1 = "Note- First three table have last 7 Days’ data where rest of the tables have only Yesterday’s data. <br/><br/>" 
+Image1 = '<img src="cid:overallB"></img><br/><br/>'
+Image2 = '<img src="cid:overall_1B"></img><br/><br/>'
+Image3 = '<img src="cid:overall_2B"></img><br/><br/>'
+Image4 = '<img src="cid:overall_3B"></img><br/><br/>'
+Image5 = '<img src="cid:overall_4B"></img><br/><br/>'
+Image6 = '<img src="cid:overall_5B"></img><br/><br/>'
+Image7 = '<img src="cid:overall_6B"></img><br/><br/>'
+Image8 = '<img src="cid:overall_7B"></img><br/><br/>'
+Image9 = '<img src="cid:overall_8B"></img><br/><br/>'
+Image10 = '<img src="cid:overall_9B"></img><br/><br/>'
+Image11 = '<img src="cid:overall_10B"></img><br/><br/>'
+Image12 = '<img src="cid:overall_11B"></img><br/><br/>'
+Image13 = '<img src="cid:overall_12B"></img><br/><br/>'
+
+
+
+   
+Regards = "<p>Best & Regards,<br/>Gaya Prasad</p>"
+    
+subject='DOM Hotels GO-MMT Cluster-B DSR | ' + yesterday_date
+body = text0 + text + text1 + Image1 + Image2 + Image3 + Image4 + Image5 + Image6 + Image7 + Image8 + Image9 + Image10 + Image11 + Image12 + Image13 + Regards
+
+rec_To_list = ['Piyush.Gupta@go-mmt.com','srinivasan.kj@go-mmt.com']
+#rec_To_list = ['Abhishek Logani <Abhishek.Logani@go-mmt.com','Vijay.Vittal@go-mmt.com','Piyush.Gupta@go-mmt.com','Rittu.Paul@go-mmt.com','Aashutosh@go-mmt.com','Dhaval.Narwani@go-mmt.com','srinivasan.kj@go-mmt.com','tanvi.girdhar@go-mmt.com','Pragya.Bhardwaj@go-mmt.com','Prateek.Singal@go-mmt.com','hina.bhatia@go-mmt.com']
+
+to_email_list=', '.join(rec_To_list)
+rec_CC_list=['gaya.prajapati@go-mmt.com']
+to_CC_list=', '.join(rec_CC_list)
+        
+send_email_1(subject,body,to_email_list)
+
+
+
+# Mail for Cluster C
+
+#Saving images
+import pandas as pd
+import os
+import requests
+import time
+import numpy as np
+from pprint import pprint
+import json
+import xlwings  as xw
+import datetime as dt
+import io
+from datetime import timedelta
+from datetime import datetime
+from xlwings import constants
+from PIL import ImageGrab #ImageGrab
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.base import MIMEBase
+from email import encoders
+import mimetypes
+import os.path
+import openpyxl
+import datetime 
+path='C://Offic data//HTL//Chain//DSR'
+if not os.path.exists(path):
+    os.makedirs(path)
+
+wb = xw.Book(r'C:\Offic data\HTL\Chain\DSR\DSR_Dashboard.xlsb')
+mysheet1 = wb.sheets('Overall_Snapshot_C')
+
+yesterday_date=datetime.date.today()-timedelta(days=1)
+yesterday_date=yesterday_date.strftime("%Y-%m-%d")
+
+
+#Snapshot
+thisrange = mysheet1.range("D2:W30")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overallC.png')
+
+thisrange = mysheet1.range("D34:P36")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_1C.png')
+
+thisrange = mysheet1.range("D47:P49")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_2C.png')
+
+thisrange = mysheet1.range("D60:P71")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_3C.png')
+
+thisrange = mysheet1.range("D78:P87")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_4C.png')
+
+thisrange = mysheet1.range("D89:P99")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_5C.png')
+
+thisrange = mysheet1.range("D101:T108")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_6C.png')
+
+thisrange = mysheet1.range("D110:T117")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_7C.png')
+
+thisrange = mysheet1.range("D120:P136")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_8C.png')
+
+thisrange = mysheet1.range("D139:P155")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_9C.png')
+
+thisrange = mysheet1.range("D158:P174")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_10C.png')
+
+thisrange = mysheet1.range("D192:O213")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_11C.png')
+
+
+thisrange = mysheet1.range("C217:O248")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_12C.png')
+wb.close()
+
+# Mail Configration
+
+import pandas as pd
+import pyodbc
+import os
+from datetime import timedelta
+from dateutil.relativedelta import relativedelta
+import datetime
+import xlwings  as xw
+from xlwings import constants
+from PIL import ImageGrab #ImageGrab
+import time
+import smtplib
+import pyodbc
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.base import MIMEBase
+from email import encoders
+import mimetypes
+
+
+def send_email_1(subject,body,to_email_list):
+    to_emails= to_email_list
+    to_CC=to_CC_list
+    message = body
+    s = smtplib.SMTP(host='smtp.outlook.office365.com', port=587)
+    s.starttls()
+    s.login('MMT7982@go-mmt.com','gommt@21')
+    msg = MIMEMultipart() 
+    msg['From']='Gaya.Prajapati@go-mmt.com'
+    msg['To']=to_emails
+    msg['CC']=to_CC
+    msg['Subject']=subject
+    msg.attach(MIMEText(message, 'HTML'))
+
+    def images(image_name):
+        fp = open(path +'\\' + image_name +'.png', 'rb')
+        msgImage1 = MIMEImage(fp.read())
+        fp.close()
+        msgImage1.add_header('Content-ID', '<' + image_name +'>')
+        msg.attach(msgImage1)
+    
+    images('overallC')
+    images('overall_1C')
+    images('overall_2C')
+    images('overall_3C')
+    images('overall_4C')
+    images('overall_5C')
+    images('overall_6C')
+    images('overall_7C')
+    images('overall_8C')
+    images('overall_9C')
+    images('overall_10C')
+    images('overall_11C')
+    images('overall_12C')
+    
+    
+
+    s.send_message(msg)
+    del msg
+    s.quit()
+    
+print('Preparing Mail body')
+text0 = "<div style = 'color:green'> This is an automated email </div> <br/>"
+text = "Hi All,  <br/> <br/> Please find below summary of Go-MMT Cluster- C Production View:-<br/>" # '+ yesterday_date +'
+text1 = "Note- First three table have last 7 Days’ data where rest of the tables have only Yesterday’s data. <br/><br/>" 
+Image1 = '<img src="cid:overallC"></img><br/><br/>'
+Image2 = '<img src="cid:overall_1C"></img><br/><br/>'
+Image3 = '<img src="cid:overall_2C"></img><br/><br/>'
+Image4 = '<img src="cid:overall_3C"></img><br/><br/>'
+Image5 = '<img src="cid:overall_4C"></img><br/><br/>'
+Image6 = '<img src="cid:overall_5C"></img><br/><br/>'
+Image7 = '<img src="cid:overall_6C"></img><br/><br/>'
+Image8 = '<img src="cid:overall_7C"></img><br/><br/>'
+Image9 = '<img src="cid:overall_8C"></img><br/><br/>'
+Image10 = '<img src="cid:overall_9C"></img><br/><br/>'
+Image11 = '<img src="cid:overall_10C"></img><br/><br/>'
+Image12 = '<img src="cid:overall_11C"></img><br/><br/>'
+Image13 = '<img src="cid:overall_12C"></img><br/><br/>'
+
+
+
+   
+Regards = "<p>Best & Regards,<br/>Gaya Prasad</p>"
+    
+subject='DOM Hotels GO-MMT Cluster-C DSR | ' + yesterday_date
+body = text0 + text + text1 + Image1 + Image2 + Image3 + Image4 + Image5 + Image6 + Image7 + Image8 + Image9 + Image10 + Image11 + Image12 + Image13 + Regards
+
+rec_To_list = ['Piyush.Gupta@go-mmt.com','srinivasan.kj@go-mmt.com']
+#rec_To_list = ['Abhishek Logani <Abhishek.Logani@go-mmt.com','Vijay.Vittal@go-mmt.com','Piyush.Gupta@go-mmt.com','Rittu.Paul@go-mmt.com','Aashutosh@go-mmt.com','Dhaval.Narwani@go-mmt.com','srinivasan.kj@go-mmt.com','tanvi.girdhar@go-mmt.com','Pragya.Bhardwaj@go-mmt.com','Prateek.Singal@go-mmt.com','hina.bhatia@go-mmt.com']
+
+to_email_list=', '.join(rec_To_list)
+rec_CC_list=['gaya.prajapati@go-mmt.com']
+to_CC_list=', '.join(rec_CC_list)
+        
+send_email_1(subject,body,to_email_list)
+
+
+
+
+
+# Mail for Cluster D
+
+#Saving images
+import pandas as pd
+import os
+import requests
+import time
+import numpy as np
+from pprint import pprint
+import json
+import xlwings  as xw
+import datetime as dt
+import io
+from datetime import timedelta
+from datetime import datetime
+from xlwings import constants
+from PIL import ImageGrab #ImageGrab
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.base import MIMEBase
+from email import encoders
+import mimetypes
+import os.path
+import openpyxl
+import datetime 
+path='C://Offic data//HTL//Chain//DSR'
+if not os.path.exists(path):
+    os.makedirs(path)
+
+wb = xw.Book(r'C:\Offic data\HTL\Chain\DSR\DSR_Dashboard.xlsb')
+mysheet1 = wb.sheets('Overall_Snapshot_D')
+
+yesterday_date=datetime.date.today()-timedelta(days=1)
+yesterday_date=yesterday_date.strftime("%Y-%m-%d")
+
+
+#Snapshot
+thisrange = mysheet1.range("D2:W30")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overallD.png')
+
+thisrange = mysheet1.range("D34:P36")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_1D.png')
+
+thisrange = mysheet1.range("D47:P49")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_2D.png')
+
+thisrange = mysheet1.range("D60:P71")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_3D.png')
+
+thisrange = mysheet1.range("D78:P87")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_4D.png')
+
+thisrange = mysheet1.range("D89:P99")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_5D.png')
+
+thisrange = mysheet1.range("D101:T108")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_6D.png')
+
+thisrange = mysheet1.range("D110:T117")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_7D.png')
+
+thisrange = mysheet1.range("D120:P136")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_8D.png')
+
+thisrange = mysheet1.range("D139:P155")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_9D.png')
+
+thisrange = mysheet1.range("D158:P174")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_10D.png')
+
+thisrange = mysheet1.range("D192:O213")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_11D.png')
+
+
+thisrange = mysheet1.range("C217:O248")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_12D.png')
+wb.close()
+
+# Mail Configration
+
+import pandas as pd
+import pyodbc
+import os
+from datetime import timedelta
+from dateutil.relativedelta import relativedelta
+import datetime
+import xlwings  as xw
+from xlwings import constants
+from PIL import ImageGrab #ImageGrab
+import time
+import smtplib
+import pyodbc
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.base import MIMEBase
+from email import encoders
+import mimetypes
+
+
+def send_email_1(subject,body,to_email_list):
+    to_emails= to_email_list
+    to_CC=to_CC_list
+    message = body
+    s = smtplib.SMTP(host='smtp.outlook.office365.com', port=587)
+    s.starttls()
+    s.login('MMT7982@go-mmt.com','gommt@21')
+    msg = MIMEMultipart() 
+    msg['From']='Gaya.Prajapati@go-mmt.com'
+    msg['To']=to_emails
+    msg['CC']=to_CC
+    msg['Subject']=subject
+    msg.attach(MIMEText(message, 'HTML'))
+
+    def images(image_name):
+        fp = open(path +'\\' + image_name +'.png', 'rb')
+        msgImage1 = MIMEImage(fp.read())
+        fp.close()
+        msgImage1.add_header('Content-ID', '<' + image_name +'>')
+        msg.attach(msgImage1)
+    
+    images('overallD')
+    images('overall_1D')
+    images('overall_2D')
+    images('overall_3D')
+    images('overall_4D')
+    images('overall_5D')
+    images('overall_6D')
+    images('overall_7D')
+    images('overall_8D')
+    images('overall_9D')
+    images('overall_10D')
+    images('overall_11D')
+    images('overall_12D')
+    
+    
+
+    s.send_message(msg)
+    del msg
+    s.quit()
+    
+print('Preparing Mail body')
+text0 = "<div style = 'color:green'> This is an automated email </div> <br/>"
+text = "Hi All,  <br/> <br/> Please find below summary of Go-MMT Cluster- D Production View:-<br/>" # '+ yesterday_date +'
+text1 = "Note- First three table have last 7 Days’ data where rest of the tables have only Yesterday’s data. <br/><br/>" 
+Image1 = '<img src="cid:overallD"></img><br/><br/>'
+Image2 = '<img src="cid:overall_1D"></img><br/><br/>'
+Image3 = '<img src="cid:overall_2D"></img><br/><br/>'
+Image4 = '<img src="cid:overall_3D"></img><br/><br/>'
+Image5 = '<img src="cid:overall_4D"></img><br/><br/>'
+Image6 = '<img src="cid:overall_5D"></img><br/><br/>'
+Image7 = '<img src="cid:overall_6D"></img><br/><br/>'
+Image8 = '<img src="cid:overall_7D"></img><br/><br/>'
+Image9 = '<img src="cid:overall_8D"></img><br/><br/>'
+Image10 = '<img src="cid:overall_9D"></img><br/><br/>'
+Image11 = '<img src="cid:overall_10D"></img><br/><br/>'
+Image12 = '<img src="cid:overall_11D"></img><br/><br/>'
+Image13 = '<img src="cid:overall_12D"></img><br/><br/>'
+
+
+
+   
+Regards = "<p>Best & Regards,<br/>Gaya Prasad</p>"
+    
+subject='DOM Hotels GO-MMT Cluster-D DSR | ' + yesterday_date
+body = text0 + text + text1 + Image1 + Image2 + Image3 + Image4 + Image5 + Image6 + Image7 + Image8 + Image9 + Image10 + Image11 + Image12 + Image13 + Regards
+
+#rec_To_list = ['Gaya.Prajapati@go-mmt.com']
+rec_To_list = ['Abhishek Logani <Abhishek.Logani@go-mmt.com','Vijay.Vittal@go-mmt.com','Piyush.Gupta@go-mmt.com','Rittu.Paul@go-mmt.com','Aashutosh@go-mmt.com','Dhaval.Narwani@go-mmt.com','srinivasan.kj@go-mmt.com','tanvi.girdhar@go-mmt.com','Pragya.Bhardwaj@go-mmt.com','Prateek.Singal@go-mmt.com','hina.bhatia@go-mmt.com','yashika.gogia@go-mmt.com']
+
+to_email_list=', '.join(rec_To_list)
+rec_CC_list=['DH.Category@go-mmt.com']
+to_CC_list=', '.join(rec_CC_list)
+        
+send_email_1(subject,body,to_email_list)
+
+
+# In[14]:
+
+
+
+# Mail for Cluster A
+
+#Saving images
+import pandas as pd
+import os
+import requests
+import time
+import numpy as np
+from pprint import pprint
+import json
+import xlwings  as xw
+import datetime as dt
+import io
+from datetime import timedelta
+from datetime import datetime
+from xlwings import constants
+from PIL import ImageGrab #ImageGrab
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.base import MIMEBase
+from email import encoders
+import mimetypes
+import os.path
+import openpyxl
+import datetime 
+path='C://Offic data//HTL//Chain//DSR'
+if not os.path.exists(path):
+    os.makedirs(path)
+
+wb = xw.Book(r'C:\Offic data\HTL\Chain\DSR\DSR_Dashboard.xlsb')
+mysheet1 = wb.sheets('Overall_Snapshot_A')
+
+yesterday_date=datetime.date.today()-timedelta(days=1)
+yesterday_date=yesterday_date.strftime("%Y-%m-%d")
+
+
+#Snapshot
+thisrange = mysheet1.range("D2:W30")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overallA.png')
+
+thisrange = mysheet1.range("D34:P36")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_1A.png')
+
+thisrange = mysheet1.range("D47:P49")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_2A.png')
+
+thisrange = mysheet1.range("D60:P71")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_3A.png')
+
+thisrange = mysheet1.range("D78:P87")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_4A.png')
+
+thisrange = mysheet1.range("D89:P99")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_5A.png')
+
+thisrange = mysheet1.range("D101:T108")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_6A.png')
+
+thisrange = mysheet1.range("D110:T117")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_7A.png')
+
+thisrange = mysheet1.range("D120:P136")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_8A.png')
+
+thisrange = mysheet1.range("D139:P155")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_9A.png')
+
+thisrange = mysheet1.range("D158:P174")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_10A.png')
+
+thisrange = mysheet1.range("D192:O213")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_11A.png')
+
+
+thisrange = mysheet1.range("C217:O248")
+pic = thisrange.api.CopyPicture(constants.PictureAppearance.xlScreen,constants.CopyPictureFormat.xlBitmap)
+img = ImageGrab.grabclipboard()
+img.save(path +'/overall_12A.png')
+wb.close()
+
+# Mail Configration
+
+import pandas as pd
+import pyodbc
+import os
+from datetime import timedelta
+from dateutil.relativedelta import relativedelta
+import datetime
+import xlwings  as xw
+from xlwings import constants
+from PIL import ImageGrab #ImageGrab
+import time
+import smtplib
+import pyodbc
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.base import MIMEBase
+from email import encoders
+import mimetypes
+
+
+def send_email_1(subject,body,to_email_list):
+    to_emails= to_email_list
+    to_CC=to_CC_list
+    message = body
+    s = smtplib.SMTP(host='smtp.outlook.office365.com', port=587)
+    s.starttls()
+    s.login('MMT7982@go-mmt.com','gommt@21')
+    msg = MIMEMultipart() 
+    msg['From']='Gaya.Prajapati@go-mmt.com'
+    msg['To']=to_emails
+    msg['CC']=to_CC
+    msg['Subject']=subject
+    msg.attach(MIMEText(message, 'HTML'))
+
+    def images(image_name):
+        fp = open(path +'\\' + image_name +'.png', 'rb')
+        msgImage1 = MIMEImage(fp.read())
+        fp.close()
+        msgImage1.add_header('Content-ID', '<' + image_name +'>')
+        msg.attach(msgImage1)
+    
+    images('overallA')
+    images('overall_1A')
+    images('overall_2A')
+    images('overall_3A')
+    images('overall_4A')
+    images('overall_5A')
+    images('overall_6A')
+    images('overall_7A')
+    images('overall_8A')
+    images('overall_9A')
+    images('overall_10A')
+    images('overall_11A')
+    images('overall_12A')
+    
+    
+
+    s.send_message(msg)
+    del msg
+    s.quit()
+    
+print('Preparing Mail body')
+text0 = "<div style = 'color:green'> This is an automated email </div> <br/>"
+text = "Hi All,  <br/> <br/> Please find below summary of Go-MMT Cluster- A Production View:-<br/>" # '+ yesterday_date +'
+text1 = "Note- First three table have last 7 Days’ data where rest of the tables have only Yesterday’s data. <br/><br/>" 
+Image1 = '<img src="cid:overallA"></img><br/><br/>'
+Image2 = '<img src="cid:overall_1A"></img><br/><br/>'
+Image3 = '<img src="cid:overall_2A"></img><br/><br/>'
+Image4 = '<img src="cid:overall_3A"></img><br/><br/>'
+Image5 = '<img src="cid:overall_4A"></img><br/><br/>'
+Image6 = '<img src="cid:overall_5A"></img><br/><br/>'
+Image7 = '<img src="cid:overall_6A"></img><br/><br/>'
+Image8 = '<img src="cid:overall_7A"></img><br/><br/>'
+Image9 = '<img src="cid:overall_8A"></img><br/><br/>'
+Image10 = '<img src="cid:overall_9A"></img><br/><br/>'
+Image11 = '<img src="cid:overall_10A"></img><br/><br/>'
+Image12 = '<img src="cid:overall_11A"></img><br/><br/>'
+Image13 = '<img src="cid:overall_12A"></img><br/><br/>'
+
+
+
+   
+Regards = "<p>Best & Regards,<br/>Gaya Prasad</p>"
+    
+subject='DOM Hotels GO-MMT Cluster-A DSR | ' + yesterday_date
+body = text0 + text + text1 + Image1 + Image2 + Image3 + Image4 + Image5 + Image6 + Image7 + Image8 + Image9 + Image10 + Image11 + Image12 + Image13 + Regards
+
+rec_To_list = ['Piyush.Gupta@go-mmt.com','srinivasan.kj@go-mmt.com']
+#rec_To_list = ['Abhishek Logani <Abhishek.Logani@go-mmt.com','Vijay.Vittal@go-mmt.com','Piyush.Gupta@go-mmt.com','Rittu.Paul@go-mmt.com','Aashutosh@go-mmt.com','Dhaval.Narwani@go-mmt.com','srinivasan.kj@go-mmt.com','tanvi.girdhar@go-mmt.com','Pragya.Bhardwaj@go-mmt.com','Prateek.Singal@go-mmt.com','hina.bhatia@go-mmt.com']
+
+to_email_list=', '.join(rec_To_list)
+rec_CC_list=['gaya.prajapati@go-mmt.com']
+to_CC_list=', '.join(rec_CC_list)
+        
+send_email_1(subject,body,to_email_list)
+
+
+
+
+
+
